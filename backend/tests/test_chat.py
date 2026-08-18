@@ -60,7 +60,8 @@ def test_chat_unexpected_error_is_500_without_traceback() -> None:
     body = response.text
     assert "Traceback" not in body
     assert "secret.py" not in body
-    assert "RuntimeError" in body
+    assert "RuntimeError" not in body
+    assert "Agent request failed" in body
 
 
 def test_chat_rejects_user_tool_calls() -> None:

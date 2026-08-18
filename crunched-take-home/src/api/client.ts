@@ -1,10 +1,11 @@
 import { ChatMessage, StepResponse } from "./types";
 
-export async function stepChat(messages: ChatMessage[]): Promise<StepResponse> {
+export async function stepChat(messages: ChatMessage[], signal?: AbortSignal): Promise<StepResponse> {
   const response = await fetch("/api/chat", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ messages }),
+    signal,
   });
   if (!response.ok) {
     const body = await response.text();

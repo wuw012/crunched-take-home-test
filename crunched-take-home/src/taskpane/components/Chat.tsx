@@ -1,89 +1,28 @@
 import * as React from "react";
 import { runTurn } from "../../agent/loop";
 import { ChatMessage } from "../../api/types";
-import { describeTool } from "../../excel/tools";
+import { refreshSelectionChip } from "../selection";
+import { STARTERS } from "../starters";
+import {
+  hasAssistantAfter,
+  hasSuccessfulWrite,
+  lastUserText,
+  visibleMessages,
+} from "../viewModel";
 import Markdown from "./Markdown";
-
-type Starter = { label: string; hint: string; prompt: string };
-
-const STARTERS: Starter[] = [
-  {
-    label: "Orient the workbook",
-    hint: "List sheets and sizes — do not ingest Exports",
-    prompt: "What sheets are in this workbook and how large is each used range? Do not read all the data.",
-  },
-  {
-    label: "Error-check the P&L",
-    hint: "Gross Profit does not foot — write formulas",
-    prompt:
-      "Gross Profit does not foot. Find the error and fix Gross Profit and Operating Profit the way a modeler would.",
-  },
-  {
-    label: "Link revenue to drivers",
-    hint: "FY24 Revenue = Assumptions Price × Units",
-    prompt: "Revenue is hardcoded. Drive FY24 Revenue from Assumptions: Price × Units.",
-  },
-  {
-    label: "Chart the P&L",
-    hint: "Clustered column, then switch it to a bar chart",
-    prompt: "Chart this P&L as a clustered column. Then make it a bar chart.",
-  },
-  {
-    label: "Stub a 3-year forecast",
-    hint: "FY25–FY27 in D–F, YoY from Assumptions, formulas only",
-    prompt:
-      "Add a 3-year forecast in D–F: FY25–FY27 revenue growing at the Assumptions YoY growth rate. Formulas only, linked to FY24 Revenue.",
-  },
-];
 
 const TEXTAREA_MAX_PX = 132;
 
 type Screen = "home" | "thread";
 
-type VisibleItem =
-  | { key: string; kind: "user" | "assistant"; text: string }
-  | { key: string; kind: "steps"; lines: string[] };
-
-function visibleMessages(messages: ChatMessage[]): VisibleItem[] {
-  const visible: VisibleItem[] = [];
-  messages.forEach((message, index) => {
-    if (message.role === "user") {
-      visible.push({ key: `${index}-user`, kind: "user", text: message.content });
-    }
-    if (message.role === "assistant" && message.tool_calls?.length) {
-      const lines = message.tool_calls.map((call) => describeTool(call.name, call.args));
-      const last = visible[visible.length - 1];
-      if (last?.kind === "steps") {
-        last.lines.push(...lines);
-      } else {
-        visible.push({ key: `${index}-steps`, kind: "steps", lines });
-      }
-    }
-    if (message.role === "assistant" && message.content) {
-      visible.push({ key: `${index}-assistant`, kind: "assistant", text: message.content });
-    }
-  });
-  return visible;
-}
-
-function lastUserText(messages: ChatMessage[]): string {
-  for (let index = messages.length - 1; index >= 0; index -= 1) {
-    const message = messages[index];
-    if (message.role === "user" && message.content.trim()) {
-      const text = message.content.trim().replace(/\s+/g, " ");
-      return text.length > 72 ? `${text.slice(0, 71)}…` : text;
-    }
-  }
-  return "Open the last thread";
-}
-
-function hasAssistantAfter(list: VisibleItem[], index: number): boolean {
-  return list.slice(index + 1).some((item) => item.kind === "assistant");
-}
-
-function StarterButton(props: { label: string; hint: string; onClick: () => void }) {
+function StarterButton(props: {
+  label: string;
+  hint: string;
+  disabled?: boolean;
+  onClick: () => void;
+}) {
   return (
-    <button type="button" className="starter" onClick={props.onClick}>
+    <button type="button" className="starter" disabled={props.disabled} onClick={props.onClick}>
       <span>
         <span className="starter__label">{props.label}</span>
         <span className="starter__hint">{props.hint}</span>
@@ -103,11 +42,14 @@ const Chat: React.FC = () => {
   const [error, setError] = React.useState<string | null>(null);
   const [composerFocused, setComposerFocused] = React.useState(false);
   const [expandedAudits, setExpandedAudits] = React.useState<Record<string, boolean>>({});
+  const [selection, setSelection] = React.useState<string | null>(null);
   const scroller = React.useRef<HTMLDivElement>(null);
   const textarea = React.useRef<HTMLTextAreaElement>(null);
   const turnId = React.useRef(0);
+  const abortRef = React.useRef<AbortController | null>(null);
   const busy = status !== null;
   const list = visibleMessages(messages);
+  const wrote = hasSuccessfulWrite(messages);
 
   React.useEffect(() => {
     if (screen !== "thread") {
@@ -125,14 +67,32 @@ const Chat: React.FC = () => {
     el.style.height = `${Math.min(el.scrollHeight, TEXTAREA_MAX_PX)}px`;
   }, [draft]);
 
+  React.useEffect(() => {
+    let cancelled = false;
+    const refresh = async () => {
+      const chip = await refreshSelectionChip();
+      if (!cancelled) {
+        setSelection(chip);
+      }
+    };
+    const onFocus = () => {
+      void refresh();
+    };
+    window.addEventListener("focus", onFocus);
+    void refresh();
+    return () => {
+      cancelled = true;
+      window.removeEventListener("focus", onFocus);
+    };
+  }, []);
+
   async function send(text: string, mode: "continue" | "new" = "continue") {
-    if (!text) {
-      return;
-    }
-    if (busy && mode === "continue") {
+    if (!text || busy) {
       return;
     }
     const history = mode === "new" ? [] : messages;
+    const controller = new AbortController();
+    abortRef.current = controller;
     const id = ++turnId.current;
     setDraft("");
     setError(null);
@@ -152,7 +112,8 @@ const Chat: React.FC = () => {
           if (id === turnId.current) {
             setMessages(nextMessages);
           }
-        }
+        },
+        { signal: controller.signal }
       );
       if (id !== turnId.current) {
         return;
@@ -166,6 +127,9 @@ const Chat: React.FC = () => {
     } finally {
       if (id === turnId.current) {
         setStatus(null);
+        if (abortRef.current === controller) {
+          abortRef.current = null;
+        }
       }
     }
   }
@@ -175,8 +139,7 @@ const Chat: React.FC = () => {
   }
 
   function stopTurn() {
-    turnId.current += 1;
-    setStatus(null);
+    abortRef.current?.abort();
   }
 
   function onSubmit(event: React.FormEvent) {
@@ -208,6 +171,11 @@ const Chat: React.FC = () => {
           <img className="brand__mark" src="assets/logo-oxblood.png" alt="" width={16} height={16} />
           <h1 className="brand__name">Crunched</h1>
         </div>
+        {selection ? (
+          <div className="chat__selection" title="Current Excel selection">
+            {selection}
+          </div>
+        ) : null}
       </header>
 
       <div className="chat__messages" ref={scroller}>
@@ -226,6 +194,7 @@ const Chat: React.FC = () => {
                   key={starter.label}
                   label={starter.label}
                   hint={starter.hint}
+                  disabled={busy}
                   onClick={() => void send(starter.prompt, "new")}
                 />
               ))}
@@ -259,9 +228,12 @@ const Chat: React.FC = () => {
                       Workbook actions
                     </button>
                     {item.lines.map((line, lineIndex) => (
-                      <div key={`${item.key}-${lineIndex}`} className="chat__step">
+                      <div
+                        key={`${item.key}-${lineIndex}`}
+                        className={line.failed ? "chat__step chat__step--failed" : "chat__step"}
+                      >
                         <span className="chat__step-index">{String(lineIndex + 1).padStart(2, "0")}</span>
-                        <span>{line}</span>
+                        <span>{line.text}</span>
                       </div>
                     ))}
                   </div>
@@ -273,6 +245,11 @@ const Chat: React.FC = () => {
                 </div>
               );
             })}
+            {wrote ? (
+              <div className="chat__notice">
+                Changes are in the open file. Excel Undo (⌘Z or Ctrl+Z) reverts.
+              </div>
+            ) : null}
             {error ? <div className="chat__error">{error}</div> : null}
           </>
         )}

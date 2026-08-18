@@ -1,1 +1,1 @@
-export { describeTool, describeToolFailure } from "../excel/tools";
+export { describeTool, describeToolFailure, parseToolError } from "../excel/tools";

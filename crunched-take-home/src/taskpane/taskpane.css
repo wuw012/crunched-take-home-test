@@ -108,6 +108,17 @@ textarea {
   line-height: 1.15;
 }
 
+.chat__selection {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  line-height: 1.3;
+  color: var(--ink-50);
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .chat__messages {
   flex: 1;
   min-height: 0;
@@ -144,11 +155,16 @@ textarea {
   cursor: pointer;
 }
 
-.starter:hover,
-.starter:focus-visible {
+.starter:hover:not(:disabled),
+.starter:focus-visible:not(:disabled) {
   outline: none;
   border-color: var(--accent-50);
   background: #fff;
+}
+
+.starter:disabled {
+  opacity: 0.5;
+  cursor: default;
 }
 
 .starter__label {
@@ -271,6 +287,17 @@ textarea {
   flex: 0 0 auto;
   color: var(--ink-40);
   font-variant-numeric: tabular-nums;
+}
+
+.chat__step--failed {
+  border-left-color: var(--negative);
+  color: var(--negative);
+}
+
+.chat__notice {
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--ink-50);
 }
 
 .chat__error {

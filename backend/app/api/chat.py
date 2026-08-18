@@ -1,3 +1,4 @@
+import logging
 import os
 
 from anthropic import APIError, AuthenticationError, RateLimitError
@@ -7,6 +8,7 @@ from app.agent.graph import step
 from app.schemas import StepRequest, StepResponse
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 
 @router.get("/health")
@@ -30,9 +32,10 @@ def chat(request: StepRequest) -> StepResponse:
         ) from exc
     except APIError as exc:
         raise HTTPException(status_code=502, detail=type(exc).__name__) from exc
-    except Exception as exc:  # noqa: BLE001 — class name only; no traceback in the pane
+    except Exception as exc:  # noqa: BLE001 — no traceback or message in the pane
+        logger.exception("Chat step failed")
         if "api key" in str(exc).lower():
             raise HTTPException(
                 status_code=503, detail=f"Invalid API key ({type(exc).__name__})"
             ) from exc
-        raise HTTPException(status_code=500, detail=type(exc).__name__) from exc
+        raise HTTPException(status_code=500, detail="Agent request failed") from exc

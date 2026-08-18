@@ -1,34 +1,44 @@
-# Crunched take-home: spreadsheet agent in Excel
+# Spreadsheet agent in Excel
 
-A simplified Crunched: chat in Excel's task pane, an AI agent that **reads and writes the live workbook**, including formulas.
+Take-home for Crunched: a task-pane chat that **reads and writes the live workbook**, including formulas, without dumping a sheet of any size into the model.
 
-Time-boxed. Prefer a small, explainable architecture over features.
+Repo: https://github.com/wuw012/crunched-take-home-test (public).
 
-## What it does
+## Setup
 
-- Task pane chat inside desktop Excel
-- Claude (Anthropic) decides whether to reply or call a tool
-- Office.js executes tools against the open file
-- Workbooks of any size: inspect structure first, refuse ranges over 2000 cells, then read a slice
+Needs Node 20+, Python 3.11+, desktop Excel for Mac, and `ANTHROPIC_API_KEY`.
 
-Demo: open `samples/demo.xlsx`, select `A1:B6` on **P&L**, ask:
+```bash
+cd backend
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -e ".[dev]"
+cp .env.example .env   # paste ANTHROPIC_API_KEY
+uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
+```
 
-> Gross Profit and Operating Profit are hardcoded. Replace them with formulas.
+```bash
+cd crunched-take-home
+npm install
+npm start
+```
 
-You should see `=B2-B3` and `=B4-B5` in the formula bar.
+Run **both** processes. Optional: `pytest` from `backend/` after `pip install -e ".[dev]"`.
 
-## Architecture
+Accept the certificate prompt if asked. In Excel: **Home → Show agent**. Open `samples/demo.xlsx` (regenerate with `python backend/scripts/make_demo.py`). Sideload is `manifest.xml`; stop with `npm stop`.
 
-Excel add-ins run in a sandboxed WebView. Python cannot open the workbook. Dumping the whole sheet into the model also fails the “any size” requirement.
+The home screen lists the walkthrough prompts in order.
 
-So the agent is a **reasoner**, not a spreadsheet engine:
+## General thoughts
 
-1. The task pane sends the chat transcript to FastAPI
-2. A one-node LangGraph graph calls Claude with tool schemas
-3. If Claude returns `tool_calls`, the **client** runs them via Office.js
-4. Tool results go back until Claude answers in text
+Excel add-ins run in a sandboxed WebView. Python cannot open the file. So the agent is a **reasoner**, not a spreadsheet engine:
 
-There is no LangGraph `ToolNode`. Excel does not exist on the server. FastAPI returns a small DTO (`message` or `tool_calls`). The loop lives in `crunched-take-home/src/agent/loop.ts`. The only Office.js file is `src/excel/gateway.ts`.
+1. The pane sends the transcript to FastAPI.
+2. A one-node LangGraph graph (`START → reason → END`) calls Claude with tool schemas only.
+3. If Claude returns `tool_calls`, the **client** runs them in Office.js.
+4. Results go back until Claude answers in text.
+
+There is no LangGraph `ToolNode`. Excel does not exist on the server. FastAPI returns a small DTO (`message` or `tool_calls`). The loop is `crunched-take-home/src/agent/loop.ts`.
 
 ```
 User → Chat.tsx → loop.ts → POST /api/chat → LangGraph step() → Claude
@@ -36,116 +46,76 @@ User → Chat.tsx → loop.ts → POST /api/chat → LangGraph step() → Claude
                      └──── Office.js tools ←────────────────────────┘
 ```
 
-### Why not dual mkcert?
+The shape is three ports: a **reasoner**, a **tool contract**, and an **Excel adapter**. Office.js is only in `gateway.ts`. Adding a tool is a Pydantic schema plus one gateway function.
 
-The brief notes that Excel's WebView will not load **add-in** URLs over HTTP (manifest, task pane, icons). The API is not one of those URLs. The task pane is served from `https://localhost:3000` and calls `/api/...` on the same origin. Webpack proxies `/api` to `http://127.0.0.1:8000`. One trusted certificate (Yeoman / `office-addin-dev-certs`). Mixed content never happens.
+**Same split, other drawings**
 
-If the proxy is removed, FastAPI would need HTTPS (mkcert) because an HTTPS pane cannot `fetch` HTTP.
+COM, Graph, or a formula engine would only replace the adapter. They are not a different architecture. The choices at this layer were:
 
-### What we did not build
+- **Reasoner in the add-in** (Anthropic from TypeScript, loop and Office.js in one WebView). One process, no FastAPI. The API key would live in the pane, and the brief asked for Python + LangGraph. Crunched also needs a server if they ever route models or log turns.
+- **Server-owned loop** (one request holds the conversation; the pane is a dumb executor over SSE/WebSocket). Closer to a production agent host. I kept **stateless `POST /api/chat`** so each step is a DTO you can show in the network tab: `message` or `tool_calls`.
+- **LangGraph `interrupt` as the loop**, client resumes with tool results. That is the idiomatic graph when tools cannot run in Python. A one-node `reason` + TypeScript loop is the same ports with less graph machinery to defend in 15 minutes.
+- **One generated tool contract** (TS types → Pydantic, or the reverse). Cleaner than two hand-written schemas. I did not add a codegen step for a 4-hour take-home; the drift risk is real and I would do that next.
 
-Streaming tokens, screenshot/vision (`Range.getImage()` is flaky on Mac — restyle charts with `set_chart_type`, not pixels), Smart/Fast model routing, audit log, web search, attach files. Adding a tool is a schema + one Office.js function.
+**Any size** means address the workbook, do not ingest it. `list_workbook_structure` returns sheet names, used-range dimensions, and chart metadata — never cell values. Reads load `rowCount` / `columnCount` before `values`. Over 2000 cells, the tool refuses and asks for a smaller A1 slice. `Exports` in the demo is there to prove we never send ~80 dummy rows.
 
-## Setup
+**Formulas, not pasted numbers.** Reads return both computed `values` and `formulas`, so hardcoded totals are visible. Writes whose strings start with `=` go through `range.formulas`. After Gross Profit is `=B2-B3`, changing COGS updates GP without another prompt. That is the product: Excel stays the engine; the associate stays the reviewer.
 
-Needs: Node 20+, Python 3.11+, desktop Excel for Mac, `ANTHROPIC_API_KEY`.
+**HTTPS.** Office will not load the add-in itself over HTTP (manifest, task pane, icons). FastAPI is not one of those URLs. The WebView is a browser: an HTTPS page cannot `fetch` HTTP (mixed content). This repo uses the usual production shape, locally. The pane is `https://localhost:3000` and calls same-origin `/api/chat`; webpack proxies that to `http://127.0.0.1:8000`. The WebView never sees HTTP. `office-addin-dev-certs` is a local CA. In production you put a real certificate on a reverse proxy in front of the static add-in and FastAPI the same way (`/` → task pane, `/api` → uvicorn).
 
-```bash
-# backend
-cd backend
-python3 -m venv .venv
-source .venv/bin/activate
-pip install -e ".[dev]"
-cp .env.example .env   # or export ANTHROPIC_API_KEY
-uvicorn app.main:app --reload --port 8000
-```
+If the proxy were removed and the pane called `http://127.0.0.1:8000` directly, Excel would block it. TLS on FastAPI at `https://localhost:8000` would still be a different origin (different port), so you would also need CORS. Same-origin proxy is the smaller local setup. Dual mkcert is valid; it is not required.
 
-```bash
-# add-in (second terminal)
-cd crunched-take-home
-npm install
-npm start
-```
+**What I cut.** Token streaming, screenshot/vision (`Range.getImage()` is unreliable on Mac — charts change `chartType` instead), Smart/Fast routing, a persistent audit trail (the pane only shows workbook actions for the current session), web search, file attach, IM/PDF extraction. Each extra tool is a schema plus one Office.js function; the walkthrough is easier to explain if that list stays short.
 
-Accept the certificate prompt if asked. In Excel: **Home → Show agent**.
+## This is not production
 
-Open `samples/demo.xlsx` (regenerate with `python backend/scripts/make_demo.py`). The task pane home screen lists the five demo prompts in walkthrough order.
+Sideload, `office-addin-dev-certs`, webpack’s `/api` proxy, `uvicorn --reload --host 127.0.0.1`, and `ANTHROPIC_API_KEY` in `backend/.env` are a laptop demo. A firm would not run that.
 
-`npm start` sideloads `manifest.xml`. Stop with `npm stop`.
+What is already true in this repo, and what I would change without moving the ports:
 
-## 15-minute demo (case-study jobs, not a chatbot)
+- **The add-in is not hosted.** `webpack.config.js` still has `urlProd = "https://www.contoso.com/"`. Production is: HTTPS static files at a real origin, that origin in `manifest.xml`, TLS on a reverse proxy with `/` → the pane and `/api` → FastAPI. `office-addin-dev-certs` does not ship.
+- **The API is a private key with no lock.** `POST /api/chat` has no auth. CORS is allowlisted to `https://localhost:3000` in `main.py`; the webpack proxy means the pane does not even need CORS today. Bind `0.0.0.0` and anyone who can reach the port spends the Anthropic key. Production: the pane gets a user session; the server holds the model key; the API rejects unauthenticated steps.
+- **The loop is a debugger.** Stateless `POST /api/chat` is easy to show in the network tab. It also means N model round-trips per user turn, no server-side cancellation if the pane dies, and two hand-written tool schemas (`app/agent/tools.py` vs `executeTool` in TypeScript) that will drift. Production: one generated contract; then, if the extra machinery pays, a server-owned loop with retries and a kill switch.
+- **“Any size” is a refuse, not a scanner.** 2000 cells is a hard stop (`policy.ts` / `MAX_CELLS`). That is the right *policy* (do not ingest `Exports`). It is not a reader for a million-row sheet. Production still starts with structure, then pages slices with a progress line — same gateway, not a dump.
+- **There is no audit trail.** The pane lists workbook actions from the current React state. Refresh clears them. Nobody is tied to a range. Crunched’s trail is: this user wrote `=B2-B3` at P&L!B4 at this time. That is storage plus identity, not a nicer chat bubble.
+- **I only ran this on Excel for Mac.** Office.js is the port; Windows and Excel for the web still have to be checked. I would not claim them.
 
-Workbook: `samples/demo.xlsx` — **P&L** (broken, like a file from a counterparty), **Assumptions** (Price=12, Units=100, 5% growth), **Exports** (~80 dummy rows).
+I would not start production by adding Smart/Fast, PDF ingest, or web search. Those are more tools. The first production work is hosting, auth, and a contract that cannot drift.
 
-Tell the story against two published Crunched cases. Do not claim the others (PDF/IM extraction, web research, tenant CapEx waterfalls) — we did not build those.
+## Limits
 
-### 1. Orient — any-size workbooks
+- 2000 cells per read/write; over that the tool refuses and asks for a smaller A1 slice
+- 16 tool rounds per turn; after 3 inspect-only rounds further reads are blocked
+- Last 12 messages trimmed by complete user turn; tool results truncated at 8k characters
+- In-memory chat only (refreshing the pane clears it)
 
-> What sheets are in this workbook and how large is each used range? Do not read all the data.
+## 15-minute walkthrough
 
-**Expect:** `list_workbook_structure` only. P&L is tiny; Exports is ~80 rows.
+Workbook: `samples/demo.xlsx` — broken **P&L**, **Assumptions** (Price=12, Units=100, 5% growth), **Exports** (~80 rows).
 
-**Say:** Crunched's product claim is workbooks of any size. The agent *addresses* the file; it does not ingest Exports. The 2000-cell guard in `gateway.ts` is that policy as code.
+This is a counterparty error-check in the spirit of [Flanders Investment Company](https://www.usecrunched.com/case-study/flander-invest), then a live driver link in the spirit of [Mile Marker Advisors](https://www.usecrunched.com/case-study/mile-marker). I am not demoing [DW Real Estate](https://www.usecrunched.com/case-study/dw-real-estate) CapEx/PDF ingest or PE research agents; those tools are not in the repo.
 
-### 2. Error-check — Flanders Investment Company
+**1. Orient.** *What sheets are in this workbook and how large is each used range? Do not read all the data.*  
+Expect `list_workbook_structure` only.
 
-[FICO](https://www.usecrunched.com/case-study/flander-invest): 5× faster error detection on models received from selling parties. Pieter even teaches this as “error checking on a spreadsheet with intentional mistakes.”
+**2. Error-check (do not skip).** Select P&L `A1:B6`. *Gross Profit does not foot. Find the error and fix Gross Profit and Operating Profit the way a modeler would.*  
+GP is 500, should be 600. Expect `=B2-B3` and `=B4-B5`, not `600`. Then change COGS yourself — GP should move.
 
-Select `A1:B6` on **P&L**.
+**3. Link drivers.** *Revenue is hardcoded. Drive FY24 Revenue from Assumptions: Price × Units.*  
+Expect `=Assumptions!B2*Assumptions!B3`. Change Price 12→15; Revenue becomes 1500 with no second prompt.
 
-> Gross Profit does not foot. Find the error and fix Gross Profit and Operating Profit the way a modeler would.
+**4–5. Optional.** Chart P&L then switch to bar (`create_chart` / `set_chart_type`). Stub FY25–FY27 in D–F with `=B2*(1+Assumptions!$B$4)` and fill-right.
 
-**Expect:** GP is 500, should be 600. Agent writes `=B2-B3` and `=B4-B5`, not `600` and `450`.
-
-**Say:** Same job as FICO, one screen. The LLM is not the calculator. You are the reviewer: change COGS yourself — GP should move.
-
-### 3. Link drivers — Mile Marker Advisors
-
-[Mile Marker](https://www.usecrunched.com/case-study/mile-marker): formula-driven models that link assumptions across sheets; the associate stays the expert reviewer.
-
-> Revenue is hardcoded. Drive FY24 Revenue from Assumptions: Price × Units.
-
-**Expect:** `=Assumptions!B2*Assumptions!B3` in B2.
-
-**Say:** Then *you* change Price from 12 to 15. Revenue becomes 1500 with no second prompt. That is their “augment, don't replace” line.
-
-### 4. Chart (optional) — live Excel object
-
-> Chart this P&L as a clustered column. Then make it a bar chart.
-
-**Say:** Same architecture as formulas: change `chartType`, do not screenshot.
-
-If time is short, drop 1 and 4. **Never drop 2** — that is the Flanders job and the Crunched hire signal.
-
-Optional extra: 3-year forecast in D–F (`=B2*(1+Assumptions!$B$4)`, …). That is a tiny Mile Marker “scaffold the model” beat, not a new product.
-
-### What we are not demoing (and why)
-
-- **DW Real Estate** (tenant CapEx, waterfall, PDF tables) — needs document ingest we cut
-- **European PE screening / IC packs** — needs research agents we cut
-- **Capital IQ formulas** — third-party data we do not have
-
-### What to open in the code (2 minutes)
-
-- `src/excel/gateway.ts` — Excel I/O + refuse-before-load
-- `src/agent/loop.ts` — client-side tool loop (Excel cannot run in Python)
-- `backend/app/agent/graph.py` — one `reason` node, no `ToolNode`
+If time is short: 2, then 3, then `gateway.ts` / `loop.ts` / `graph.py`.
 
 ## Layout
 
 ```
 crunched-take-home/     Excel React task pane (HTTPS :3000)
-  src/agent/loop.ts     tool loop + step cap
-  src/excel/gateway.ts  Office.js only
-  src/excel/tools.ts    name → gateway, unknown tool fails closed
+  src/agent/loop.ts     client tool loop
+  src/excel/gateway.ts  Office.js + refuse-before-load
 backend/                 FastAPI :8000
-  app/agent/graph.py    LangGraph START → reason → END
+  app/agent/graph.py    one reason node, no ToolNode
   app/agent/tools.py    schemas only
 samples/demo.xlsx
 ```
-
-## Known limits
-
-- 2000-cell cap; last 12 messages trimmed by complete user turn (never mid tool-call); tool results truncated at 8k characters; max 16 tool rounds per turn; after 3 inspect-only rounds further reads are refused
-- In-memory chat only (refreshing the pane clears it)
-- Reads return both `values` and `formulas`. Formula writes: cells whose string starts with `=` go through `range.formulas`

@@ -1,21 +1,46 @@
 /* global Excel */
 
 import { MAX_CELLS } from "../shared/limits";
+import {
+  cellCount,
+  exceedsCellCap,
+  hasFormula,
+  JsonValue,
+  padRows,
+  tooLarge,
+} from "./policy";
 
-export type JsonValue = string | number | boolean | null;
+export type { JsonValue };
 
-function cellCount(rows: number, columns: number): number {
-  return rows * columns;
-}
+async function loadBoundedRange(
+  context: Excel.RequestContext,
+  range: Excel.Range,
+  sheet: string
+): Promise<Record<string, unknown>> {
+  range.load(["address", "rowCount", "columnCount"]);
+  await context.sync();
 
-function tooLarge(rows: number, columns: number): Record<string, unknown> {
+  const rows = range.rowCount;
+  const columns = range.columnCount;
+  if (exceedsCellCap(rows, columns)) {
+    return {
+      sheet,
+      address: range.address,
+      ...tooLarge(rows, columns),
+      values: null,
+      formulas: null,
+    };
+  }
+
+  range.load(["values", "formulas"]);
+  await context.sync();
   return {
-    error: "range_too_large",
+    sheet,
+    address: range.address,
     rows,
     columns,
-    cells: cellCount(rows, columns),
-    max_cells: MAX_CELLS,
-    hint: "Read or write a smaller A1 slice (for example A1:H50).",
+    values: range.values,
+    formulas: range.formulas,
   };
 }
 
@@ -54,24 +79,27 @@ export async function listWorkbookStructure(): Promise<unknown> {
   });
 }
 
-const CHART_TYPES: Record<string, Excel.ChartType> = {
-  column: Excel.ChartType.columnClustered,
-  bar: Excel.ChartType.barClustered,
-  line: Excel.ChartType.line,
-  pie: Excel.ChartType.pie,
-};
+function chartTypes(): Record<string, Excel.ChartType> {
+  return {
+    column: Excel.ChartType.columnClustered,
+    bar: Excel.ChartType.barClustered,
+    line: Excel.ChartType.line,
+    pie: Excel.ChartType.pie,
+  };
+}
 
 /** Default placement: right of a typical P&L stub, below header rows. */
 const DEFAULT_CHART_TOP_LEFT = "D8";
 const DEFAULT_CHART_BOTTOM_RIGHT = "L22";
 
 function resolveChartType(raw: string): Excel.ChartType | null {
+  const types = chartTypes();
   const key = raw.trim().toLowerCase();
-  return CHART_TYPES[key] ?? null;
+  return types[key] ?? null;
 }
 
 function unknownChartType(chartType: string): Record<string, unknown> {
-  return { error: "unknown_chart_type", chart_type: chartType, allowed: Object.keys(CHART_TYPES) };
+  return { error: "unknown_chart_type", chart_type: chartType, allowed: Object.keys(chartTypes()) };
 }
 
 export async function createChart(
@@ -132,33 +160,10 @@ export async function setChartType(sheet: string, chartType: string, name?: stri
 export async function getSelection(): Promise<unknown> {
   return Excel.run(async (context) => {
     const range = context.workbook.getSelectedRange();
-    range.load(["address", "rowCount", "columnCount"]);
     const sheet = range.worksheet;
     sheet.load("name");
     await context.sync();
-
-    const rows = range.rowCount;
-    const columns = range.columnCount;
-    if (cellCount(rows, columns) > MAX_CELLS) {
-      return {
-        sheet: sheet.name,
-        address: range.address,
-        ...tooLarge(rows, columns),
-        values: null,
-        formulas: null,
-      };
-    }
-
-    range.load(["values", "formulas"]);
-    await context.sync();
-    return {
-      sheet: sheet.name,
-      address: range.address,
-      rows,
-      columns,
-      values: range.values,
-      formulas: range.formulas,
-    };
+    return loadBoundedRange(context, range, sheet.name);
   });
 }
 
@@ -166,41 +171,7 @@ export async function readRange(sheet: string, a1: string): Promise<unknown> {
   return Excel.run(async (context) => {
     const worksheet = context.workbook.worksheets.getItem(sheet);
     const range = worksheet.getRange(a1);
-    range.load(["address", "rowCount", "columnCount"]);
-    await context.sync();
-
-    const rows = range.rowCount;
-    const columns = range.columnCount;
-    if (cellCount(rows, columns) > MAX_CELLS) {
-      return {
-        sheet,
-        address: range.address,
-        ...tooLarge(rows, columns),
-        values: null,
-        formulas: null,
-      };
-    }
-
-    range.load(["values", "formulas"]);
-    await context.sync();
-    return {
-      sheet,
-      address: range.address,
-      rows,
-      columns,
-      values: range.values,
-      formulas: range.formulas,
-    };
-  });
-}
-
-function padRows(values: JsonValue[][]): JsonValue[][] {
-  const columns = values.reduce((max, row) => Math.max(max, row.length), 0);
-  return values.map((row) => {
-    if (row.length === columns) {
-      return row;
-    }
-    return [...row, ...Array(columns - row.length).fill(null)];
+    return loadBoundedRange(context, range, sheet);
   });
 }
 
@@ -223,14 +194,12 @@ export async function writeRange(
     return tooLarge(rows, columns);
   }
 
-  const hasFormula = padded.some((row) =>
-    row.some((cell) => typeof cell === "string" && cell.startsWith("="))
-  );
+  const wroteFormulas = hasFormula(padded);
 
   return Excel.run(async (context) => {
     const worksheet = context.workbook.worksheets.getItem(sheet);
     const range = worksheet.getRange(startCell).getResizedRange(rows - 1, columns - 1);
-    if (hasFormula) {
+    if (wroteFormulas) {
       range.formulas = padded as unknown as string[][];
     } else {
       range.values = padded as unknown as string[][];
@@ -243,7 +212,7 @@ export async function writeRange(
       address: range.address,
       rows,
       columns,
-      wrote_formulas: hasFormula,
+      wrote_formulas: wroteFormulas,
     };
   });
 }
