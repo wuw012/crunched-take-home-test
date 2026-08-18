@@ -50,8 +50,8 @@ test("drops oldest complete turn to fit the cap", () => {
   }
   assert.equal(messages.length, 14);
 
-  const trimmed = trimHistory(messages);
-  assert.equal(trimmed.length, MAX_MESSAGES);
+  const trimmed = trimHistory(messages, 12);
+  assert.equal(trimmed.length, 12);
   assert.deepEqual(trimmed[0], user("q1"));
 });
 
@@ -62,9 +62,9 @@ test("never splits an assistant tool_calls message from its tool results", () =>
     ...Array.from({ length: 11 }, (_, i) => user(`u${i}`)),
   ];
   assert.equal(naiveSplit.length, 13);
-  assert.equal(naiveSplit.slice(-MAX_MESSAGES)[0]?.role, "tool");
+  assert.equal(naiveSplit.slice(-12)[0]?.role, "tool");
 
-  const trimmedOldest = trimHistory(naiveSplit);
+  const trimmedOldest = trimHistory(naiveSplit, 12);
   assertPairing(trimmedOldest);
   assert.equal(
     trimmedOldest.some((message) => message.role === "tool"),
@@ -76,7 +76,7 @@ test("never splits an assistant tool_calls message from its tool results", () =>
     withCurrentPair.push(user(`old-${i}`));
   }
   withCurrentPair.push(user("now"), toolCall("1"), toolResult("1"));
-  const trimmedCurrent = trimHistory(withCurrentPair);
+  const trimmedCurrent = trimHistory(withCurrentPair, 12);
   assertPairing(trimmedCurrent);
   assert.ok(
     trimmedCurrent.some((message) => message.role === "assistant" && message.tool_calls?.[0]?.id === "1")

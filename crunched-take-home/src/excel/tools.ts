@@ -15,6 +15,7 @@ function truncate(payload: unknown): string {
     return text;
   }
   return JSON.stringify({
+    error: "truncated",
     truncated: true,
     max_chars: MAX_TOOL_RESULT_CHARS,
     hint: "Result was truncated. Read a smaller range.",
@@ -41,11 +42,14 @@ function missingArg(name: string): string {
   return truncate({ error: "missing_arg", name });
 }
 
-function asGrid(value: unknown): JsonValue[][] {
-  if (!Array.isArray(value)) {
-    throw new Error("values must be a 2D array");
+function asGrid(value: unknown): JsonValue[][] | null {
+  if (!Array.isArray(value) || value.length === 0) {
+    return null;
   }
-  return value.map((row) => (Array.isArray(row) ? (row as JsonValue[]) : [row as JsonValue]));
+  if (!value.every((row) => Array.isArray(row))) {
+    return null;
+  }
+  return value as JsonValue[][];
 }
 
 function writeSnippet(args: Record<string, unknown>): string {
@@ -137,7 +141,11 @@ export async function executeTool(name: string, args: Record<string, unknown>): 
         if (!("values" in args)) {
           return missingArg("values");
         }
-        return truncate(await writeRange(sheet, start, asGrid(args.values)));
+        const grid = asGrid(args.values);
+        if (!grid) {
+          return truncate({ error: "values_not_grid" });
+        }
+        return truncate(await writeRange(sheet, start, grid));
       }
       case "create_chart": {
         const sheet = readString(args, "sheet");
@@ -205,6 +213,28 @@ export function describeTool(name: string, args: Record<string, unknown>): strin
   }
 }
 
+export function describeToolPending(name: string, args: Record<string, unknown>): string {
+  switch (name) {
+    case "list_workbook_structure":
+      return "Inspecting workbook structure";
+    case "get_selection":
+      return "Reading current selection";
+    case "read_range":
+      return `Reading ${toolTarget(name, args)}`;
+    case "write_range": {
+      const snippet = writeSnippet(args);
+      const target = toolTarget(name, args);
+      return snippet ? `Writing ${target} · ${snippet}` : `Writing ${target}`;
+    }
+    case "create_chart":
+      return `Charting ${toolTarget(name, args)} · ${asString(args.chart_type, "chart")}`;
+    case "set_chart_type":
+      return `Retargeting chart · ${asString(args.chart_type, "type")}`;
+    default:
+      return name;
+  }
+}
+
 export function describeToolFailure(name: string, args: Record<string, unknown>, content: string): string {
   const error = parseToolError(content) ?? "error";
   const target = toolTarget(name, args);
@@ -221,6 +251,18 @@ export function describeToolFailure(name: string, args: Record<string, unknown>,
     } catch {
       return "Failed: missing argument";
     }
+  }
+  if (error === "truncated") {
+    return `Failed: ${target} truncated`;
+  }
+  if (error === "cancelled") {
+    return "Failed: stopped";
+  }
+  if (error === "values_not_grid") {
+    return `Failed: ${target} values must be a 2D array`;
+  }
+  if (error === "start_cell_not_a1") {
+    return `Failed: ${target} start_cell must be one cell`;
   }
   if (error === "unknown_tool") {
     return `Failed: unknown tool ${name}`;

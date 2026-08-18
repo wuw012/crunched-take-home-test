@@ -22,7 +22,7 @@
     "signout": "office-addin-dev-settings m365-account logout",
     "start": "office-addin-debugging start manifest.xml",
     "stop": "office-addin-debugging stop manifest.xml",
-    "test": "tsx --test src/agent/*.test.ts src/excel/*.test.ts src/taskpane/*.test.ts",
+    "test": "tsx --test src/agent/*.test.ts src/api/*.test.ts src/excel/*.test.ts src/taskpane/*.test.ts",
     "validate": "office-addin-manifest validate manifest.xml",
     "watch": "webpack --mode development --watch"
   },

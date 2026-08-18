@@ -12,3 +12,5 @@ dist/
 .vscode/
 crunched-take-home/.vscode/
 ~$*.xlsx
+.coverage
+htmlcov/

@@ -1,11 +1,23 @@
 import { ChatMessage } from "../api/types";
-import { describeTool, describeToolFailure, parseToolError } from "../excel/tools";
+import {
+  describeTool,
+  describeToolFailure,
+  describeToolPending,
+  parseToolError,
+} from "../excel/tools";
 
-export type AuditLine = { text: string; failed: boolean };
+export type AuditLine = { text: string; failed: boolean; pending: boolean };
 
 export type VisibleItem =
   | { key: string; kind: "user" | "assistant"; text: string }
   | { key: string; kind: "steps"; lines: AuditLine[] };
+
+const SELECTION_MARKER = "\n\nExcel selection:";
+
+export function displayUserText(content: string): string {
+  const index = content.indexOf(SELECTION_MARKER);
+  return index >= 0 ? content.slice(0, index) : content;
+}
 
 function collectToolResults(messages: ChatMessage[], start: number): Map<string, string> {
   const results = new Map<string, string>();
@@ -23,19 +35,20 @@ export function visibleMessages(messages: ChatMessage[]): VisibleItem[] {
   const visible: VisibleItem[] = [];
   messages.forEach((message, index) => {
     if (message.role === "user") {
-      visible.push({ key: `${index}-user`, kind: "user", text: message.content });
+      visible.push({ key: `${index}-user`, kind: "user", text: displayUserText(message.content) });
     }
     if (message.role === "assistant" && message.tool_calls?.length) {
       const results = collectToolResults(messages, index + 1);
       const lines = message.tool_calls.map((call) => {
         const content = results.get(call.id);
-        const failed = content ? parseToolError(content) !== null : false;
-        return {
-          text: failed
+        const pending = content === undefined;
+        const failed = Boolean(content && parseToolError(content) !== null);
+        const text = pending
+          ? describeToolPending(call.name, call.args)
+          : failed
             ? describeToolFailure(call.name, call.args, content ?? "")
-            : describeTool(call.name, call.args),
-          failed,
-        };
+            : describeTool(call.name, call.args);
+        return { text, failed, pending };
       });
       const last = visible[visible.length - 1];
       if (last?.kind === "steps") {
@@ -55,7 +68,7 @@ export function lastUserText(messages: ChatMessage[]): string {
   for (let index = messages.length - 1; index >= 0; index -= 1) {
     const message = messages[index];
     if (message.role === "user" && message.content.trim()) {
-      const text = message.content.trim().replace(/\s+/g, " ");
+      const text = displayUserText(message.content).trim().replace(/\s+/g, " ");
       return text.length > 72 ? `${text.slice(0, 71)}…` : text;
     }
   }

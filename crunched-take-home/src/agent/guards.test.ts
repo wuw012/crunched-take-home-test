@@ -3,7 +3,9 @@ import { test } from "node:test";
 import { ToolCall } from "../api/types";
 import {
   INSPECT_TOOLS,
+  isCellInspect,
   isInspectOnly,
+  isStructureOnly,
   MAX_INSPECT_ROUNDS,
   shouldBlockInspect,
   toolRoundKey,
@@ -38,4 +40,12 @@ test("shouldBlockInspect after MAX_INSPECT_ROUNDS", () => {
   assert.equal(shouldBlockInspect(reads, MAX_INSPECT_ROUNDS - 1), false);
   assert.equal(shouldBlockInspect(reads, MAX_INSPECT_ROUNDS), true);
   assert.equal(shouldBlockInspect([call("write_range")], MAX_INSPECT_ROUNDS), false);
+});
+
+test("isStructureOnly does not count as cell inspect", () => {
+  assert.equal(isStructureOnly([call("list_workbook_structure")]), true);
+  assert.equal(isCellInspect([call("list_workbook_structure")]), false);
+  assert.equal(isCellInspect([call("read_range")]), true);
+  assert.equal(isCellInspect([call("get_selection"), call("read_range")]), true);
+  assert.equal(isCellInspect([call("list_workbook_structure"), call("read_range")]), true);
 });

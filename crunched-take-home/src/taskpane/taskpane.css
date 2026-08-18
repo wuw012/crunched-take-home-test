@@ -293,6 +293,11 @@ textarea {
   color: var(--negative);
 }
 
+.chat__step--pending {
+  border-left-color: var(--ink-40);
+  color: var(--ink-50);
+}
+
 .chat__notice {
   font-size: 12px;
   line-height: 1.45;

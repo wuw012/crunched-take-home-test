@@ -2,11 +2,12 @@
 
 import { MAX_CELLS } from "../shared/limits";
 import {
-  cellCount,
+  chartAlias,
+  CHART_ALIAS_LIST,
   exceedsCellCap,
-  hasFormula,
+  isA1Cell,
   JsonValue,
-  padRows,
+  plannedWrites,
   tooLarge,
 } from "./policy";
 
@@ -71,7 +72,7 @@ export async function listWorkbookStructure(): Promise<unknown> {
             },
         charts: charts.items.map((chart) => ({
           name: chart.name,
-          type: chart.chartType,
+          type: chartAlias(String(chart.chartType)) ?? String(chart.chartType),
           title: chart.title.text || null,
         })),
       })),
@@ -93,13 +94,15 @@ const DEFAULT_CHART_TOP_LEFT = "D8";
 const DEFAULT_CHART_BOTTOM_RIGHT = "L22";
 
 function resolveChartType(raw: string): Excel.ChartType | null {
-  const types = chartTypes();
-  const key = raw.trim().toLowerCase();
-  return types[key] ?? null;
+  const alias = chartAlias(raw);
+  if (!alias) {
+    return null;
+  }
+  return chartTypes()[alias];
 }
 
 function unknownChartType(chartType: string): Record<string, unknown> {
-  return { error: "unknown_chart_type", chart_type: chartType, allowed: Object.keys(chartTypes()) };
+  return { error: "unknown_chart_type", chart_type: chartType, allowed: CHART_ALIAS_LIST };
 }
 
 export async function createChart(
@@ -116,6 +119,15 @@ export async function createChart(
   return Excel.run(async (context) => {
     const worksheet = context.workbook.worksheets.getItem(sheet);
     const range = worksheet.getRange(sourceA1);
+    range.load(["rowCount", "columnCount", "address"]);
+    await context.sync();
+    if (exceedsCellCap(range.rowCount, range.columnCount)) {
+      return {
+        sheet,
+        source: range.address,
+        ...tooLarge(range.rowCount, range.columnCount),
+      };
+    }
     const chart = worksheet.charts.add(type, range, Excel.ChartSeriesBy.auto);
     chart.setPosition(DEFAULT_CHART_TOP_LEFT, DEFAULT_CHART_BOTTOM_RIGHT);
     if (title) {
@@ -127,7 +139,7 @@ export async function createChart(
       sheet,
       source: sourceA1,
       name: chart.name,
-      type: chart.chartType,
+      type: chartAlias(String(chart.chartType)) ?? chartType,
     };
   });
 }
@@ -153,7 +165,23 @@ export async function setChartType(sheet: string, chartType: string, name?: stri
     chart.chartType = type;
     chart.load(["name", "chartType"]);
     await context.sync();
-    return { sheet, name: chart.name, type: chart.chartType };
+    return { sheet, name: chart.name, type: chartAlias(String(chart.chartType)) ?? chartType };
+  });
+}
+
+export async function getSelectionMeta(): Promise<unknown> {
+  return Excel.run(async (context) => {
+    const range = context.workbook.getSelectedRange();
+    const sheet = range.worksheet;
+    sheet.load("name");
+    range.load(["address", "rowCount", "columnCount"]);
+    await context.sync();
+    return {
+      sheet: sheet.name,
+      address: range.address,
+      rows: range.rowCount,
+      columns: range.columnCount,
+    };
   });
 }
 
@@ -180,39 +208,60 @@ export async function writeRange(
   startCell: string,
   values: JsonValue[][]
 ): Promise<unknown> {
+  if (!isA1Cell(startCell)) {
+    return {
+      error: "start_cell_not_a1",
+      start_cell: startCell,
+      hint: "start_cell must be a single cell like B4, not a range.",
+    };
+  }
   if (!Array.isArray(values) || values.length === 0) {
     return { error: "values must be a non-empty 2D array" };
   }
 
-  const padded = padRows(values);
-  const rows = padded.length;
-  const columns = padded[0]?.length ?? 0;
-  if (rows === 0 || columns === 0) {
+  const writes = plannedWrites(values);
+  if (writes.length === 0) {
     return { error: "values must be a non-empty 2D array" };
   }
-  if (cellCount(rows, columns) > MAX_CELLS) {
-    return tooLarge(rows, columns);
+  if (writes.length > MAX_CELLS) {
+    return {
+      error: "range_too_large",
+      cells: writes.length,
+      max_cells: MAX_CELLS,
+      hint: "Write a smaller block.",
+    };
   }
 
-  const wroteFormulas = hasFormula(padded);
+  const wroteFormulas = writes.some((cell) => cell.formula);
+  const boundRows = Math.max(...writes.map((cell) => cell.row)) + 1;
+  const boundColumns = Math.max(...writes.map((cell) => cell.column)) + 1;
 
   return Excel.run(async (context) => {
     const worksheet = context.workbook.worksheets.getItem(sheet);
-    const range = worksheet.getRange(startCell).getResizedRange(rows - 1, columns - 1);
-    if (wroteFormulas) {
-      range.formulas = padded as unknown as string[][];
-    } else {
-      range.values = padded as unknown as string[][];
+    const origin = worksheet.getRange(startCell);
+    for (const cell of writes) {
+      const target = origin.getOffsetRange(cell.row, cell.column);
+      if (cell.formula) {
+        target.formulas = [[String(cell.value)]];
+      } else {
+        target.values = [[cell.value as string | number | boolean]];
+      }
     }
-    await context.sync();
-    range.load("address");
+    const bounds = origin.getResizedRange(boundRows - 1, boundColumns - 1);
+    bounds.load("address");
     await context.sync();
     return {
       sheet,
-      address: range.address,
-      rows,
-      columns,
+      address: bounds.address,
+      rows: boundRows,
+      columns: boundColumns,
+      cells: writes.length,
       wrote_formulas: wroteFormulas,
+      ...(wroteFormulas
+        ? {}
+        : {
+            hint: "No formulas in this write. Totals should use = if inputs can change.",
+          }),
     };
   });
 }

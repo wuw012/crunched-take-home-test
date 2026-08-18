@@ -1,6 +1,12 @@
 from pathlib import Path
 
 from openpyxl import Workbook
+from openpyxl.utils import get_column_letter
+
+# Header + 80 data rows, A–Z. Cell count must exceed MAX_CELLS (2000).
+EXPORT_DATA_ROWS = 80
+EXPORT_COLS = 26
+EXPORT_CELLS = (EXPORT_DATA_ROWS + 1) * EXPORT_COLS
 
 
 def main() -> None:
@@ -43,11 +49,18 @@ def main() -> None:
     data["A1"] = "Month"
     data["B1"] = "Region"
     data["C1"] = "Amount"
+    for col in range(4, EXPORT_COLS + 1):
+        data.cell(1, col, f"Col{get_column_letter(col)}")
     regions = ["Nordics", "UK", "DACH", "US"]
-    for i in range(2, 82):
-        data[f"A{i}"] = f"2024-{((i - 2) % 12) + 1:02d}"
-        data[f"B{i}"] = regions[(i - 2) % 4]
-        data[f"C{i}"] = 80 + ((i * 17) % 40)
+    for i in range(2, EXPORT_DATA_ROWS + 2):
+        data.cell(i, 1, f"2024-{((i - 2) % 12) + 1:02d}")
+        data.cell(i, 2, regions[(i - 2) % 4])
+        for col in range(3, EXPORT_COLS + 1):
+            data.cell(i, col, 80 + ((i * 17 + col) % 40))
+    if EXPORT_CELLS <= 2000:
+        raise RuntimeError(
+            f"Exports used range is {EXPORT_CELLS} cells; must exceed MAX_CELLS=2000"
+        )
 
     out = Path(__file__).resolve().parents[2] / "samples" / "demo.xlsx"
     out.parent.mkdir(parents=True, exist_ok=True)

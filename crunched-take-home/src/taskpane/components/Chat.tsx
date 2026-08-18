@@ -91,6 +91,10 @@ const Chat: React.FC = () => {
       return;
     }
     const history = mode === "new" ? [] : messages;
+    const chip = await refreshSelectionChip();
+    if (chip) {
+      setSelection(chip);
+    }
     const controller = new AbortController();
     abortRef.current = controller;
     const id = ++turnId.current;
@@ -113,7 +117,7 @@ const Chat: React.FC = () => {
             setMessages(nextMessages);
           }
         },
-        { signal: controller.signal }
+        { signal: controller.signal, selection: chip },
       );
       if (id !== turnId.current) {
         return;
@@ -135,6 +139,7 @@ const Chat: React.FC = () => {
   }
 
   function goHome() {
+    abortRef.current?.abort();
     setScreen("home");
   }
 
@@ -230,7 +235,13 @@ const Chat: React.FC = () => {
                     {item.lines.map((line, lineIndex) => (
                       <div
                         key={`${item.key}-${lineIndex}`}
-                        className={line.failed ? "chat__step chat__step--failed" : "chat__step"}
+                        className={
+                          line.failed
+                            ? "chat__step chat__step--failed"
+                            : line.pending
+                              ? "chat__step chat__step--pending"
+                              : "chat__step"
+                        }
                       >
                         <span className="chat__step-index">{String(lineIndex + 1).padStart(2, "0")}</span>
                         <span>{line.text}</span>

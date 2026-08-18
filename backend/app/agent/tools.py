@@ -1,8 +1,11 @@
 from typing import Any, Literal
+import re
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 from app.limits import MAX_CELLS
+
+A1_CELL = re.compile(r"^\$?[A-Za-z]+\$?[1-9]\d*$")
 
 
 class list_workbook_structure(BaseModel):
@@ -21,21 +24,28 @@ class read_range(BaseModel):
 
 
 class write_range(BaseModel):
-    """Write a 2D array starting at start_cell. Strings that start with = are Excel formulas, not hardcoded values. Prefer formulas for totals and calculated lines. If the block is larger than 2000 cells, do not write — use a smaller range."""
+    """Write a 2D array starting at start_cell. Strings that start with = are Excel formulas, mixed with values in the same block. Omitted cells are left unchanged. Prefer formulas for totals and calculated lines. If the block is larger than 2000 cells, do not write — use a smaller range."""
 
     sheet: str = Field(description="Worksheet name")
-    start_cell: str = Field(description="Top-left cell, e.g. B5")
+    start_cell: str = Field(description="Top-left cell only, e.g. B5 — not a range")
     values: list[list[Any]] = Field(description="Rows of cell values or formulas")
+
+    @field_validator("start_cell")
+    @classmethod
+    def start_cell_is_single(cls, value: str) -> str:
+        cell = value.strip()
+        if not A1_CELL.match(cell):
+            raise ValueError("start_cell must be a single cell like B4, not a range")
+        return cell
 
     @model_validator(mode="after")
     def cap_cells(self) -> "write_range":
-        rows = len(self.values)
-        columns = max((len(row) for row in self.values), default=0)
-        if rows == 0 or columns == 0:
+        cells = sum(1 for row in self.values for cell in row if cell is not None)
+        if cells == 0:
             raise ValueError("values must be a non-empty 2D array")
-        if rows * columns > MAX_CELLS:
+        if cells > MAX_CELLS:
             raise ValueError(
-                f"Range too large: {rows}x{columns} cells. Max is {MAX_CELLS}. Write a smaller block."
+                f"Range too large: {cells} cells. Max is {MAX_CELLS}. Write a smaller block."
             )
         return self
 

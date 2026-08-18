@@ -30,3 +30,32 @@ test("executeTool returns missing_arg without calling Excel", async () => {
   assert.equal(JSON.parse(content).error, "missing_arg");
   assert.equal(JSON.parse(content).name, "sheet");
 });
+
+test("executeTool rejects a 1D write grid", async () => {
+  const content = await executeTool("write_range", {
+    sheet: "P&L",
+    start_cell: "B4",
+    values: [1, 2, 3],
+  });
+  assert.equal(JSON.parse(content).error, "values_not_grid");
+});
+
+test("executeTool rejects a range as start_cell", async () => {
+  const content = await executeTool("write_range", {
+    sheet: "P&L",
+    start_cell: "A1:B2",
+    values: [["=B2-B3"]],
+  });
+  assert.equal(JSON.parse(content).error, "start_cell_not_a1");
+});
+
+test("parseToolError treats truncation as an error", () => {
+  assert.equal(
+    parseToolError(JSON.stringify({ error: "truncated", truncated: true, preview: "[" })),
+    "truncated"
+  );
+  assert.equal(
+    describeToolFailure("read_range", { sheet: "P&L", a1: "A1:Z200" }, JSON.stringify({ error: "truncated" })),
+    "Failed: P&L!A1:Z200 truncated"
+  );
+});

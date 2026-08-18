@@ -24,7 +24,7 @@ class AgentState(TypedDict):
 
 
 MODEL = ChatAnthropic(
-    model=os.getenv("ANTHROPIC_MODEL", "claude-haiku-4-5-20251001"),
+    model=os.getenv("ANTHROPIC_MODEL", "claude-sonnet-4-5-20250929"),
     temperature=0,
     timeout=60,
 ).bind_tools(TOOLS)
@@ -53,7 +53,8 @@ def _normalize_args(name: str, args: dict[str, Any]) -> dict[str, Any]:
     try:
         return schema.model_validate(args).model_dump()
     except ValidationError:
-        # Excel/gateway.ts is the runtime enforcer; a 400 here aborts the turn.
+        # Do not 400 the turn. Invalid args still go to the WebView so the
+        # model gets a tool result (range_too_large, start_cell_not_a1).
         return args
 
 

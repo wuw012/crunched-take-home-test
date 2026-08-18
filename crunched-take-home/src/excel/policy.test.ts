@@ -3,10 +3,11 @@ import { test } from "node:test";
 import { MAX_CELLS } from "../shared/limits";
 import {
   cellCount,
+  chartAlias,
   exceedsCellCap,
-  hasFormula,
+  isA1Cell,
   isFormulaCell,
-  padRows,
+  plannedWrites,
   tooLarge,
 } from "./policy";
 
@@ -32,17 +33,44 @@ test("tooLarge is refuse-before-load JSON", () => {
   });
 });
 
-test("padRows pads short rows with null", () => {
-  assert.deepEqual(padRows([[1], [2, 3]]), [
-    [1, null],
-    [2, 3],
+test("isA1Cell accepts a cell and rejects a range", () => {
+  assert.equal(isA1Cell("B4"), true);
+  assert.equal(isA1Cell("$B$4"), true);
+  assert.equal(isA1Cell("AA10"), true);
+  assert.equal(isA1Cell("A1:B2"), false);
+  assert.equal(isA1Cell("P&L!B4"), false);
+});
+
+test("plannedWrites skips omitted cells instead of padding null", () => {
+  assert.deepEqual(plannedWrites([["Revenue"], ["COGS", 400]]), [
+    { row: 0, column: 0, value: "Revenue", formula: false },
+    { row: 1, column: 0, value: "COGS", formula: false },
+    { row: 1, column: 1, value: 400, formula: false },
   ]);
 });
 
-test("isFormulaCell and hasFormula detect leading =", () => {
+test("plannedWrites splits labels and formulas in one block", () => {
+  const writes = plannedWrites([["Gross Profit", "=B2-B3"], ["Operating Profit", " =B4-B5"]]);
+  assert.deepEqual(writes, [
+    { row: 0, column: 0, value: "Gross Profit", formula: false },
+    { row: 0, column: 1, value: "=B2-B3", formula: true },
+    { row: 1, column: 0, value: "Operating Profit", formula: false },
+    { row: 1, column: 1, value: "=B4-B5", formula: true },
+  ]);
+});
+
+test("isFormulaCell trims a leading space before =", () => {
   assert.equal(isFormulaCell("=B2-B3"), true);
+  assert.equal(isFormulaCell(" =B2-B3"), true);
   assert.equal(isFormulaCell("600"), false);
   assert.equal(isFormulaCell(600), false);
-  assert.equal(hasFormula([["Gross Profit", "=B2-B3"]]), true);
-  assert.equal(hasFormula([["Gross Profit", 600]]), false);
+});
+
+test("chartAlias maps Office.js enums and tool literals", () => {
+  assert.equal(chartAlias("column"), "column");
+  assert.equal(chartAlias("ColumnClustered"), "column");
+  assert.equal(chartAlias("barClustered"), "bar");
+  assert.equal(chartAlias("Line"), "line");
+  assert.equal(chartAlias("pie"), "pie");
+  assert.equal(chartAlias("radar"), null);
 });

@@ -1,4 +1,4 @@
-import { getSelection } from "../excel/gateway";
+import { getSelectionMeta } from "../excel/gateway";
 
 export function formatSelectionChip(payload: unknown): string | null {
   if (!payload || typeof payload !== "object") {
@@ -22,7 +22,7 @@ export function formatSelectionChip(payload: unknown): string | null {
 /** Refreshes on pane/window focus, not on every Excel click. */
 export async function refreshSelectionChip(): Promise<string | null> {
   try {
-    return formatSelectionChip(await getSelection());
+    return formatSelectionChip(await getSelectionMeta());
   } catch {
     return null;
   }

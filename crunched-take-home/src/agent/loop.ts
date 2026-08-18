@@ -1,12 +1,13 @@
 import { stepChat as postChat } from "../api/client";
-import { ChatMessage, StepResponse } from "../api/types";
-import { describeTool, executeTool as runExcelTool } from "../excel/tools";
+import { ChatMessage, StepResponse, ToolCall } from "../api/types";
+import { describeTool as describeToolLabel, executeTool as runExcelTool } from "../excel/tools";
 import { MAX_STEPS } from "../shared/limits";
-import { isInspectOnly, shouldBlockInspect, toolRoundKey } from "./guards";
+import { isCellInspect, isInspectOnly, shouldBlockInspect, toolRoundKey } from "./guards";
 import { trimHistory } from "./trim";
 
 export type RunTurnOptions = {
   signal?: AbortSignal;
+  selection?: string | null;
   stepChat?: (messages: ChatMessage[], signal?: AbortSignal) => Promise<StepResponse>;
   executeTool?: (name: string, args: Record<string, unknown>) => Promise<string>;
   describeTool?: (name: string, args: Record<string, unknown>) => string;
@@ -20,6 +21,20 @@ function stopped(signal?: AbortSignal): boolean {
   return Boolean(signal?.aborted);
 }
 
+function cancelledResult(): string {
+  return JSON.stringify({
+    error: "cancelled",
+    hint: "The user stopped this turn before the tool finished.",
+  });
+}
+
+export function userMessageContent(userText: string, selection?: string | null): string {
+  if (!selection) {
+    return userText;
+  }
+  return `${userText}\n\nExcel selection: ${selection}`;
+}
+
 export async function runTurn(
   history: ChatMessage[],
   userText: string,
@@ -29,16 +44,22 @@ export async function runTurn(
 ): Promise<ChatMessage[]> {
   const step = options.stepChat ?? postChat;
   const execute = options.executeTool ?? runExcelTool;
-  const describe = options.describeTool ?? describeTool;
+  const describe = options.describeTool ?? describeToolLabel;
   const { signal } = options;
 
-  const messages: ChatMessage[] = [...history, { role: "user", content: userText }];
+  const messages: ChatMessage[] = [
+    ...history,
+    { role: "user", content: userMessageContent(userText, options.selection) },
+  ];
   let previousRound: string | null = null;
   let inspectRounds = 0;
 
   const publish = () => onMessages([...messages]);
 
-  const halt = () => {
+  const halt = (pending: ToolCall[] = []) => {
+    for (const call of pending) {
+      messages.push({ role: "tool", tool_call_id: call.id, content: cancelledResult() });
+    }
     onStatus("Stopping…");
     publish();
     return messages;
@@ -72,7 +93,8 @@ export async function runTurn(
     }
 
     const roundKey = toolRoundKey(response.tool_calls);
-    if (roundKey === previousRound) {
+    const blockInspect = shouldBlockInspect(response.tool_calls, inspectRounds);
+    if (roundKey === previousRound && !blockInspect) {
       messages.push({
         role: "assistant",
         content: "Stopped: the same tool call repeated. Send another message to continue.",
@@ -85,10 +107,14 @@ export async function runTurn(
     messages.push({ role: "assistant", content: null, tool_calls: response.tool_calls });
     publish();
 
-    const blockInspect = shouldBlockInspect(response.tool_calls, inspectRounds);
-    for (const call of response.tool_calls) {
+    if (stopped(signal)) {
+      return halt(response.tool_calls);
+    }
+
+    for (let index = 0; index < response.tool_calls.length; index += 1) {
+      const call = response.tool_calls[index];
       if (stopped(signal)) {
-        return halt();
+        return halt(response.tool_calls.slice(index));
       }
       onStatus(`${describe(call.name, call.args)}…`);
       const content = blockInspect
@@ -104,7 +130,11 @@ export async function runTurn(
       return halt();
     }
     if (!blockInspect) {
-      inspectRounds = isInspectOnly(response.tool_calls) ? inspectRounds + 1 : 0;
+      if (isCellInspect(response.tool_calls)) {
+        inspectRounds += 1;
+      } else if (!isInspectOnly(response.tool_calls)) {
+        inspectRounds = 0;
+      }
     }
     onStatus("Working…");
   }

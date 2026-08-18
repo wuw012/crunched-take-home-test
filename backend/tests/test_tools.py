@@ -19,6 +19,11 @@ def test_write_range_rejects_oversize() -> None:
         write_range(sheet="P&L", start_cell="A1", values=values)
 
 
+def test_write_range_rejects_range_start_cell() -> None:
+    with pytest.raises(ValidationError):
+        write_range(sheet="P&L", start_cell="A1:B2", values=[["=B2-B3"]])
+
+
 def test_write_range_accepts_formulas() -> None:
     payload = write_range(
         sheet="P&L",
@@ -89,7 +94,20 @@ def test_step_strips_extra_write_range_keys() -> None:
     assert "extra" not in result.tool_calls[0].args
 
 
+def test_step_invalid_start_cell_still_returns_tool_calls() -> None:
+    args = {"sheet": "P&L", "start_cell": "A1:B2", "values": [["=B2-B3"]]}
+    ai = AIMessage(
+        content="",
+        tool_calls=[{"id": "1", "name": "write_range", "args": args}],
+    )
+    with patch("app.agent.graph.GRAPH.invoke", return_value={"messages": [ai]}):
+        result = step([UserMessage(role="user", content="fix GP")])
+    assert result.type == "tool_calls"
+    assert result.tool_calls[0].args["start_cell"] == "A1:B2"
+
+
 def test_step_oversize_write_range_still_returns_tool_calls() -> None:
+    """Invalid tool args must not 400 the step. The WebView refuses and the model sees the error."""
     values = [[0] * 50 for _ in range(50)]
     args = {"sheet": "P&L", "start_cell": "A1", "values": values}
     ai = AIMessage(
