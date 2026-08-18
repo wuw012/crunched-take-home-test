@@ -35,7 +35,7 @@ User -> Chat.tsx -> loop.ts -> POST /api/chat -> LangGraph step() -> Claude
 
 One-node graph, tool schemas only, no `ToolNode`. FastAPI returns `message` or `tool_calls`. Loop is `loop.ts`. Office.js is only in `gateway.ts`. A new tool is a Pydantic schema plus one gateway function.
 
-I kept a stateless `POST /api/chat` so each step is a DTO in the network tab. Claude-in-the-pane would drop FastAPI, but the brief asked for Python and LangGraph. SSE plus LangGraph `interrupt` is the same ports with more graph. Two hand-written schemas will drift; I would generate one contract next.
+The brief asked for Python and LangGraph. Office.js stays in the pane because Python cannot `Excel.run`. I used one `reason` node so the server never pretends to open the file. The loop is still linear; LangGraph is the wrapper. I kept stateless `POST /api/chat` so each step is a DTO in the network tab. Two hand-written schemas will drift. I would generate one contract next.
 
 "Any size" means look, don't swallow. `list_workbook_structure` returns names and used-range sizes, no cell values. Reads check `rowCount` / `columnCount` before `values` and refuse over 2000 cells. Demo Exports is 81×26, so a used-range read refuses on camera.
 
@@ -47,7 +47,17 @@ Laptop demo: no auth, Contoso `urlProd`, key in `.env`, Mac only, action list is
 
 Caps: 2000 cells; 16 tool rounds; 5 cell-inspect rounds then block further reads (structure listing does not count); last 48 messages trimmed by complete user turn.
 
-This was greenfield. The split is right. The graph maybe was not. See below.
+## Layout
+
+```
+crunched-take-home/     Excel React task pane (HTTPS :3000)
+  src/agent/loop.ts     client tool loop
+  src/excel/gateway.ts  Office.js + refuse-before-load
+backend/                 FastAPI :8000
+  app/agent/graph.py    one reason node, no ToolNode
+  app/agent/tools.py    schemas only
+samples/demo.xlsx
+```
 
 ## 15-minute walkthrough
 
@@ -62,25 +72,3 @@ Flanders-shaped error-check, then Mile Marker-shaped driver link. Not DW CapEx/P
 3. Link drivers. "Revenue is hardcoded. Drive FY24 Revenue from Assumptions: Price x Units." Expect `=Assumptions!B2*Assumptions!B3`. Change Price 12 to 15; Revenue becomes 1500.
 
 Skip chart/forecast unless they ask. If time is short: 2, then 3, then `gateway.ts` / `loop.ts` / `graph.py`.
-
-## Layout
-
-```
-crunched-take-home/     Excel React task pane (HTTPS :3000)
-  src/agent/loop.ts     client tool loop
-  src/excel/gateway.ts  Office.js + refuse-before-load
-backend/                 FastAPI :8000
-  app/agent/graph.py    one reason node, no ToolNode
-  app/agent/tools.py    schemas only
-samples/demo.xlsx
-```
-
-## What I might have done instead
-
-The brief asked for Python and LangGraph. I kept Office.js in the pane — that part is load-bearing — and made the graph one `reason` node so Python never pretended to open Excel. Wrapping a linear loop in LangGraph was still costume.
-
-I maybe should have put the brain in TypeScript anyway. Same-origin Node BFF, linear streamed loop (Vercel AI SDK or Anthropic TS SDK), one Zod/JSON Schema for tools. The pane only runs Office.js. One language with `gateway.ts` / `loop.ts`. No Pydantic plus `api/types.ts` twins, no N `POST /api/chat` for one turn.
-
-I still would not put a LangGraph `ToolNode` on the server (Python cannot `Excel.run`). I still would not host MCP in the WebView (it cannot bind stdio or HTTP). I still would not use Copilot Studio or Graph — that is a saved cloud file or a fire-and-forget skill, not an abortable loop on the live grid.
-
-Either way I would keep refuse-before-load in `gateway.ts`, errors as tool results, turn-aware trim, and abort pairing.
