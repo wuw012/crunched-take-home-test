@@ -1,6 +1,6 @@
 import { stepChat as postChat } from "../api/client";
 import { ChatMessage, StepResponse } from "../api/types";
-import { describeTool as describeToolLabel, executeTool as runExcelTool } from "../excel/tools";
+import { describeTool, executeTool as runExcelTool } from "../excel/tools";
 import { MAX_STEPS } from "../shared/limits";
 import { isInspectOnly, shouldBlockInspect, toolRoundKey } from "./guards";
 import { trimHistory } from "./trim";
@@ -29,7 +29,7 @@ export async function runTurn(
 ): Promise<ChatMessage[]> {
   const step = options.stepChat ?? postChat;
   const execute = options.executeTool ?? runExcelTool;
-  const describe = options.describeTool ?? describeToolLabel;
+  const describe = options.describeTool ?? describeTool;
   const { signal } = options;
 
   const messages: ChatMessage[] = [...history, { role: "user", content: userText }];

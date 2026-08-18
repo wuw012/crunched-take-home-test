@@ -16,7 +16,6 @@
   --font-sans: "Helvetica Neue", Helvetica, "Segoe UI", system-ui, sans-serif;
   --font-mono: "SF Mono", "JetBrains Mono", "IBM Plex Mono", Menlo, Consolas, monospace;
   --radius: 2px;
-  --ease: cubic-bezier(0.2, 0, 0, 1);
 }
 
 *,
