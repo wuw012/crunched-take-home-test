@@ -35,7 +35,7 @@ User -> Chat.tsx -> loop.ts -> POST /api/chat -> LangGraph step() -> Claude
 
 One-node graph, tool schemas only, no `ToolNode`. FastAPI returns `message` or `tool_calls`. Loop is `loop.ts`. Office.js is only in `gateway.ts`. A new tool is a Pydantic schema plus one gateway function.
 
-The brief asked for Python and LangGraph. Office.js stays in the pane because Python cannot `Excel.run`. I used one `reason` node so the server never pretends to open the file. The loop is still linear; LangGraph is the wrapper. I kept stateless `POST /api/chat` so each step is a DTO in the network tab. Two hand-written schemas will drift. I would generate one contract next.
+I mirrored their stack (React, Office.js, FastAPI, LangGraph). The brief said the approach was up to me. Office.js stays in the pane because Python cannot `Excel.run`. I used one `reason` node so the server never pretends to open the file. The loop is still linear; LangGraph is the wrapper. I kept stateless `POST /api/chat` so each step is a DTO in the network tab. Two hand-written schemas will drift. I would generate one contract next.
 
 "Any size" means look, don't swallow. `list_workbook_structure` returns names and used-range sizes, no cell values. Reads check `rowCount` / `columnCount` before `values` and refuse over 2000 cells. Demo Exports is 81×26, so a used-range read refuses on camera.
 
@@ -43,7 +43,9 @@ Reads return `values` and `formulas`. Writes go cell by cell: `=` is a formula, 
 
 The pane is `https://localhost:3000` and calls same-origin `/api/chat`; webpack proxies to `http://127.0.0.1:8000`. Office will not load the add-in over HTTP, and an HTTPS page cannot `fetch` HTTP. Production is a real cert on a reverse proxy.
 
-Laptop demo: no auth, Contoso `urlProd`, key in `.env`, Mac only, action list is React state. Stop pairs cancelled tool results so the next send does not 500; it does not undo Excel writes already in the grid. Python does not 400 invalid `write_range` args; the pane refuses and the model sees the tool error. Write tests mock `Excel.run`. Charts pin to D8:L22. Cell JSON is untrusted; no delimiter. I would ship hosting, auth, and one contract before PDF ingest.
+Stop pairs cancelled tool results so the next send does not 500; it does not undo Excel writes already in the grid. Python does not 400 invalid `write_range` args; the pane refuses and the model sees the tool error. Write tests mock `Excel.run`. Charts pin to D8:L22. Cell JSON is untrusted; no delimiter.
+
+Laptop demo: no auth, Contoso `urlProd`, key in `.env`, Mac only, action list is React state. I would ship hosting, auth, and one contract before PDF ingest.
 
 Caps: 2000 cells; 16 tool rounds; 5 cell-inspect rounds then block further reads (structure listing does not count); last 48 messages trimmed by complete user turn.
 
