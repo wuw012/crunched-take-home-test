@@ -47,6 +47,8 @@ Laptop demo: no auth, Contoso `urlProd`, key in `.env`, Mac only, action list is
 
 Caps: 2000 cells; 16 tool rounds; 5 cell-inspect rounds then block further reads (structure listing does not count); last 48 messages trimmed by complete user turn.
 
+This was greenfield. The split is right. The graph maybe was not. See below.
+
 ## 15-minute walkthrough
 
 `samples/demo.xlsx`: broken P&L, Assumptions (Price=12, Units=100, 5% growth), Exports over the read cap.
@@ -72,3 +74,13 @@ backend/                 FastAPI :8000
   app/agent/tools.py    schemas only
 samples/demo.xlsx
 ```
+
+## What I might have done instead
+
+The brief asked for Python and LangGraph. I kept Office.js in the pane — that part is load-bearing — and made the graph one `reason` node so Python never pretended to open Excel. Wrapping a linear loop in LangGraph was still costume.
+
+I maybe should have put the brain in TypeScript anyway. Same-origin Node BFF, linear streamed loop (Vercel AI SDK or Anthropic TS SDK), one Zod/JSON Schema for tools. The pane only runs Office.js. One language with `gateway.ts` / `loop.ts`. No Pydantic plus `api/types.ts` twins, no N `POST /api/chat` for one turn.
+
+I still would not put a LangGraph `ToolNode` on the server (Python cannot `Excel.run`). I still would not host MCP in the WebView (it cannot bind stdio or HTTP). I still would not use Copilot Studio or Graph — that is a saved cloud file or a fire-and-forget skill, not an abortable loop on the live grid.
+
+Either way I would keep refuse-before-load in `gateway.ts`, errors as tool results, turn-aware trim, and abort pairing.
