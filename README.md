@@ -35,7 +35,7 @@ User -> Chat.tsx -> loop.ts -> POST /api/chat -> LangGraph step() -> Claude
 
 One-node graph, tool schemas only, no `ToolNode`. FastAPI returns `message` or `tool_calls`. Loop is `loop.ts`. Office.js is only in `gateway.ts`. A new tool is a Pydantic schema plus one gateway function.
 
-I mirrored your stack (React, Office.js, FastAPI, LangGraph). The brief said the approach was up to me. Office.js stays in the pane because Python cannot `Excel.run`. I used one `reason` node so the server never pretends to open the file. The loop is still linear; LangGraph is the wrapper. I kept stateless `POST /api/chat` so each step is a DTO in the network tab. Two hand-written schemas will drift. I would generate one contract next.
+I mirrored your stack (React, Office.js, FastAPI, LangGraph). Office.js stays in the pane because Python cannot `Excel.run`. I used one `reason` node so the server never pretends to open the file. The loop is still linear; LangGraph is the wrapper. I kept stateless `POST /api/chat` so each step is a DTO in the network tab. Two hand-written schemas will drift. I would generate one contract next.
 
 "Any size" means look, don't swallow. `list_workbook_structure` returns names and used-range sizes, no cell values. Reads check `rowCount` / `columnCount` before `values` and refuse over 2000 cells. Demo Exports is 81×26, so a used-range read refuses on camera.
 
